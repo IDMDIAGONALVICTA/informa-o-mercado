@@ -3,10 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mapa de Empreendimentos - Análise Completa (Dinâmico)</title>
+    <title>Mapa de Empreendimentos - Análise Completa</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -93,10 +92,9 @@
         .status-message.loading { background: #fff3e0; border-left-color: #ff9800; }
         .status-message.success { background: #e8f5e9; border-left-color: #4caf50; }
         .status-message.error { background: #ffebee; border-left-color: #f44336; }
-        .satellite-toggle {
+        .satellite-toggle, .fullscreen-toggle {
             position: absolute;
             top: 10px;
-            left: 60px;
             z-index: 1000;
             background: white;
             padding: 10px 20px;
@@ -107,22 +105,9 @@
             font-size: 14px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
-        .satellite-toggle:hover { background: #007C27; color: white; }
-        .fullscreen-toggle {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: 3px solid #007C27;
-            cursor: pointer;
-            font-weight: bold;
-            font-size: 14px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-        }
-        .fullscreen-toggle:hover { background: #007C27; color: white; }
+        .satellite-toggle { left: 60px; }
+        .fullscreen-toggle { right: 10px; }
+        .satellite-toggle:hover, .fullscreen-toggle:hover { background: #007C27; color: white; }
         .legend {
             background: white;
             padding: 15px;
@@ -154,7 +139,68 @@
         }
         .stat-card h3 { font-size: 0.9em; color: #666; margin-bottom: 8px; }
         .stat-card .value { font-size: 1.8em; font-weight: bold; color: #007C27; }
-        .custom-marker { text-align: center; }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            padding: 20px 30px;
+            background: #f9f9f9;
+            border-top: 2px solid #e0e0e0;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            background: white;
+            border: 2px solid #007C27;
+            color: #007C27;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .tab-btn.active { background: #007C27; color: white; }
+        .tab-content {
+            display: none;
+            padding: 20px 30px;
+        }
+        .tab-content.active { display: block; }
+        .table-container {
+            overflow-x: auto;
+            padding: 20px 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        table th {
+            background: #007C27;
+            color: white;
+            padding: 10px;
+            text-align: left;
+            font-weight: bold;
+        }
+        table td {
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        table tr:hover { background: #f5f5f5; }
+        .amenidades-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            padding: 20px 30px;
+        }
+        .amenidade-btn {
+            padding: 10px;
+            background: white;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+            font-size: 13px;
+        }
+        .amenidade-btn:hover { border-color: #007C27; background: #f0f0f0; }
+        .amenidade-btn.selected { background: #007C27; color: white; border-color: #007C27; }
     </style>
 </head>
 <body>
@@ -210,17 +256,34 @@
         </div>
 
         <div class="stats-grid" id="statsGrid"></div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('tabela')">📋 Tabela Completa</button>
+            <button class="tab-btn" onclick="switchTab('amenidades')">🏊 Amenidades</button>
+            <button class="tab-btn" onclick="switchTab('analise')">📊 Análise</button>
+        </div>
+
+        <div id="tabela" class="tab-content active">
+            <div class="table-container" id="tableContainer"></div>
+        </div>
+
+        <div id="amenidades" class="tab-content">
+            <div class="amenidades-grid" id="amenidadesGrid"></div>
+        </div>
+
+        <div id="analise" class="tab-content">
+            <canvas id="analiseChart" style="max-height: 400px;"></canvas>
+        </div>
     </div>
 
     <script>
-        // URL da planilha do Google Sheets (formato CSV)
         const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTCTgFtZ0xJiA8Hmi73AVuf1ZqAou-EjqCRQ1EpmzhWBPwp-uhgsUs0x3tgPIofgkHZIyuYuN5UQO3A/pub?gid=0&single=true&output=csv';
 
         let map, markers = [], searchMarkers = [], currentFilter = 'all';
         let empreendimentos = [];
         let isSatellite = false, streetLayer, satelliteLayer;
+        let analiseChart = null;
 
-        // Inicializar mapa
         function initMap() {
             map = L.map('map').setView([-3.7319, -38.5267], 11);
             
@@ -237,7 +300,6 @@
             streetLayer.addTo(map);
         }
 
-        // Carregar dados da planilha
         async function loadDataFromSheet() {
             try {
                 updateStatus('⏳ Carregando dados da planilha...', 'loading');
@@ -245,30 +307,29 @@
                 const response = await fetch(SHEET_URL);
                 const csvText = await response.text();
                 
-                // Parsear CSV
                 empreendimentos = parseCSV(csvText);
                 
                 if (empreendimentos.length === 0) {
-                    updateStatus('❌ Nenhum empreendimento encontrado na planilha', 'error');
+                    updateStatus('❌ Nenhum empreendimento encontrado', 'error');
                     return;
                 }
                 
-                updateStatus(`✅ ${empreendimentos.length} empreendimentos carregados com sucesso!`, 'success');
+                updateStatus(`✅ ${empreendimentos.length} empreendimentos carregados!`, 'success');
                 
                 addMarkers();
                 updateStats();
+                updateTable();
+                updateAmenidades();
+                updateAnalise();
                 
-                // Recarregar a cada 30 segundos
                 setTimeout(loadDataFromSheet, 30000);
             } catch (error) {
-                console.error('Erro ao carregar dados:', error);
-                updateStatus('❌ Erro ao carregar dados da planilha', 'error');
-                // Tentar novamente em 10 segundos
+                console.error('Erro:', error);
+                updateStatus('❌ Erro ao carregar dados', 'error');
                 setTimeout(loadDataFromSheet, 10000);
             }
         }
 
-        // Parsear CSV
         function parseCSV(csvText) {
             const lines = csvText.trim().split('\n');
             if (lines.length < 2) return [];
@@ -294,12 +355,11 @@
             return data;
         }
 
-        // Adicionar marcadores ao mapa
         function addMarkers() {
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
 
-            empreendimentos.forEach((emp, index) => {
+            empreendimentos.forEach((emp) => {
                 if (!shouldShowEmpreendimento(emp)) return;
 
                 try {
@@ -308,45 +368,47 @@
 
                     if (isNaN(lat) || isNaN(lng)) return;
 
-                    // Determinar cor baseada em % vendida
                     const pctVendida = parseFloat(emp['% VENDIDA']) || 0;
-                    let color = '#dc3545'; // vermelho (baixo)
-                    if (pctVendida > 0.7) color = '#28a745'; // verde (alto)
-                    else if (pctVendida > 0.4) color = '#ffc107'; // amarelo (médio)
+                    let color = '#dc3545';
+                    if (pctVendida > 0.7) color = '#28a745';
+                    else if (pctVendida > 0.4) color = '#ffc107';
 
-                    // Criar ícone customizado com cor
                     const icon = L.divIcon({
                         className: 'custom-marker',
-                        html: `<div style="background: ${color}; width: 45px; height: 45px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; text-align: center; padding: 2px;">
+                        html: `<div style="background: ${color}; width: 45px; height: 45px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
                             ${emp.EMPRESA.substring(0, 3)}
                         </div>`,
                         iconSize: [45, 45],
-                        iconAnchor: [22, 22],
-                        popupAnchor: [0, -22]
+                        iconAnchor: [22, 22]
                     });
 
+                    const amenidades = getAmenidades(emp);
+                    const popupContent = `
+                        <div style="width: 400px; font-size: 12px;">
+                            <h3 style="color: #007C27; margin-bottom: 10px;">${emp.EMPREENDIMENTO}</h3>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr><td><strong>Endereço:</strong></td><td>${emp.ENDEREÇO}</td></tr>
+                                <tr><td><strong>Empresa:</strong></td><td>${emp.EMPRESA}</td></tr>
+                                <tr><td><strong>Cidade:</strong></td><td>${emp.CIDADE}</td></tr>
+                                <tr><td><strong>Linha:</strong></td><td>${emp['LINHA DE PRODUTO']}</td></tr>
+                                <tr style="background: #f5f5f5;"><td><strong>Unidades:</strong></td><td>${emp.UNIDADES}</td></tr>
+                                <tr style="background: #f5f5f5;"><td><strong>Vendidas:</strong></td><td>${emp.VENDAS} (${(pctVendida * 100).toFixed(1)}%)</td></tr>
+                                <tr style="background: #f5f5f5;"><td><strong>Estoque:</strong></td><td>${emp.ESTOQUE}</td></tr>
+                                <tr><td><strong>M² Médio:</strong></td><td>${emp['M² MÉDIO']}</td></tr>
+                                <tr><td><strong>VGV Médio:</strong></td><td>R$ ${emp['VGV Médio']}</td></tr>
+                                <tr><td><strong>Lançamento:</strong></td><td>${emp.LANÇAMENTO}</td></tr>
+                                <tr><td><strong>Entrega:</strong></td><td>${emp.ENTREGA}</td></tr>
+                                <tr><td><strong>Método:</strong></td><td>${emp['METODO CONSTRUTIVO']}</td></tr>
+                                <tr><td><strong>Sinal:</strong></td><td>${emp[' Sinal ']}</td></tr>
+                                <tr><td><strong>Parcelas:</strong></td><td>${emp[' Qtd. Parcela ']}</td></tr>
+                                <tr style="background: #e8f5e9;"><td colspan="2"><strong>Amenidades:</strong> ${amenidades}</td></tr>
+                            </table>
+                        </div>
+                    `;
+
                     const marker = L.marker([lat, lng], { icon: icon })
-                        .bindTooltip(`
-                            <div style="min-width: 220px; line-height: 1.4;">
-                                <strong style="font-size: 14px;">${emp.EMPREENDIMENTO}</strong><br>
-                                <strong>% Venda:</strong> ${(pctVendida * 100).toFixed(1)}%<br>
-                                <strong>Empresa:</strong> ${emp.EMPRESA}<br>
-                                <strong>Cidade:</strong> ${emp.CIDADE}
-                            </div>
-                        `, { direction: 'top', sticky: true, opacity: 0.95 })
-                        .bindPopup(`
-                            <div style="width: 320px; font-size: 13px;">
-                                <strong style="font-size: 15px; color: #007C27;">${emp.EMPREENDIMENTO}</strong><br>
-                                <small style="color: #666;">${emp.ENDEREÇO}</small><br><br>
-                                <table style="width: 100%; border-collapse: collapse;">
-                                    <tr><td><strong>Empresa:</strong></td><td>${emp.EMPRESA}</td></tr>
-                                    <tr><td><strong>Cidade:</strong></td><td>${emp.CIDADE}</td></tr>
-                                    <tr><td><strong>Vendas:</strong></td><td>${emp.VENDAS} (${(pctVendida * 100).toFixed(1)}%)</td></tr>
-                                    <tr><td><strong>Estoque:</strong></td><td>${emp.ESTOQUE}</td></tr>
-                                    <tr><td><strong>Unidades:</strong></td><td>${emp.UNIDADES}</td></tr>
-                                </table>
-                            </div>
-                        `)
+                        .bindTooltip(`<strong>${emp.EMPREENDIMENTO}</strong><br>${emp.EMPRESA}`, { direction: 'top', sticky: true })
+                        .bindPopup(popupContent)
                         .addTo(map);
 
                     markers.push(marker);
@@ -356,7 +418,20 @@
             });
         }
 
-        // Filtrar empreendimentos
+        function getAmenidades(emp) {
+            const amenidades = [];
+            const keys = [' PISCINA ADULTO ', ' PISCINA INFANTIL ', ' PLAYGROUND ', ' PETPLACE ', ' BICICLETÁRIO ', ' ESPAÇO FITNESS ', ' SALÃO DE FESTA ', ' ROOFTOP ', ' HORTA ', ' REDÁRIO ', ' PRAÇA ', ' CHURRAQUEIRA '];
+            const icons = { ' PISCINA ADULTO ': '🏊', ' PISCINA INFANTIL ': '👶', ' PLAYGROUND ': '🎪', ' PETPLACE ': '🐕', ' BICICLETÁRIO ': '🚲', ' ESPAÇO FITNESS ': '💪', ' SALÃO DE FESTA ': '🎉', ' ROOFTOP ': '🏢', ' HORTA ': '🌱', ' REDÁRIO ': '🪢', ' PRAÇA ': '🌳', ' CHURRAQUEIRA ': '🔥' };
+            
+            keys.forEach(key => {
+                if (emp[key] && emp[key].toString().toUpperCase() === 'SIM') {
+                    amenidades.push(icons[key]);
+                }
+            });
+            
+            return amenidades.length > 0 ? amenidades.join(' ') : 'Nenhuma';
+        }
+
         function shouldShowEmpreendimento(emp) {
             if (currentFilter === 'all') return true;
             const pct = parseFloat(emp['% VENDIDA']) || 0;
@@ -373,7 +448,6 @@
             addMarkers();
         }
 
-        // Atualizar estatísticas
         function updateStats() {
             const stats = {
                 total: empreendimentos.length,
@@ -381,7 +455,7 @@
                 vendidas: 0,
                 estoque: 0,
                 vgvTotal: 0,
-                vgvEstoque: 0
+                vendaMes: 0
             };
 
             empreendimentos.forEach(emp => {
@@ -389,40 +463,121 @@
                 stats.vendidas += parseInt(emp.VENDAS) || 0;
                 stats.estoque += parseInt(emp.ESTOQUE) || 0;
                 stats.vgvTotal += parseFloat(emp['VGV Médio']) * (parseInt(emp.UNIDADES) || 0) || 0;
-                stats.vgvEstoque += parseFloat(emp['VGV Estoque']) || 0;
+                stats.vendaMes += parseInt(emp['Venda mês']) || 0;
             });
 
+            const pctVendida = ((stats.vendidas / stats.unidades) * 100).toFixed(1);
+
             const statsHtml = `
-                <div class="stat-card">
-                    <h3>Empreendimentos</h3>
-                    <div class="value">${stats.total}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Total de Unidades</h3>
-                    <div class="value">${stats.unidades.toLocaleString('pt-BR')}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Unidades Vendidas</h3>
-                    <div class="value">${stats.vendidas.toLocaleString('pt-BR')}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Unidades em Estoque</h3>
-                    <div class="value">${stats.estoque.toLocaleString('pt-BR')}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>% Vendida</h3>
-                    <div class="value">${((stats.vendidas / stats.unidades) * 100).toFixed(1)}%</div>
-                </div>
-                <div class="stat-card">
-                    <h3>VGV Total</h3>
-                    <div class="value">R$ ${(stats.vgvTotal / 1000000).toFixed(1)}M</div>
-                </div>
+                <div class="stat-card"><h3>Empreendimentos</h3><div class="value">${stats.total}</div></div>
+                <div class="stat-card"><h3>Total de Unidades</h3><div class="value">${stats.unidades.toLocaleString('pt-BR')}</div></div>
+                <div class="stat-card"><h3>Unidades Vendidas</h3><div class="value">${stats.vendidas.toLocaleString('pt-BR')}</div></div>
+                <div class="stat-card"><h3>Unidades em Estoque</h3><div class="value">${stats.estoque.toLocaleString('pt-BR')}</div></div>
+                <div class="stat-card"><h3>% Vendida</h3><div class="value">${pctVendida}%</div></div>
+                <div class="stat-card"><h3>Venda/Mês</h3><div class="value">${stats.vendaMes}</div></div>
+                <div class="stat-card"><h3>VGV Total</h3><div class="value">R$ ${(stats.vgvTotal / 1000000).toFixed(1)}M</div></div>
             `;
 
             document.getElementById('statsGrid').innerHTML = statsHtml;
         }
 
-        // Alternar entre mapa e satélite
+        function updateTable() {
+            let html = '<table><thead><tr>';
+            const headers = ['EMPREENDIMENTO', 'EMPRESA', 'CIDADE', 'UNIDADES', 'VENDAS', '% VENDIDA', 'ESTOQUE', 'M² MÉDIO', 'VGV Médio', 'LANÇAMENTO', 'ENTREGA', 'METODO CONSTRUTIVO', 'Amenidades'];
+            
+            headers.forEach(h => html += `<th>${h}</th>`);
+            html += '</tr></thead><tbody>';
+
+            empreendimentos.forEach(emp => {
+                const pct = parseFloat(emp['% VENDIDA']) || 0;
+                const amenidades = getAmenidades(emp);
+                html += `<tr>
+                    <td>${emp.EMPREENDIMENTO}</td>
+                    <td>${emp.EMPRESA}</td>
+                    <td>${emp.CIDADE}</td>
+                    <td>${emp.UNIDADES}</td>
+                    <td>${emp.VENDAS}</td>
+                    <td>${(pct * 100).toFixed(1)}%</td>
+                    <td>${emp.ESTOQUE}</td>
+                    <td>${emp['M² MÉDIO']}</td>
+                    <td>R$ ${emp['VGV Médio']}</td>
+                    <td>${emp.LANÇAMENTO}</td>
+                    <td>${emp.ENTREGA}</td>
+                    <td>${emp['METODO CONSTRUTIVO']}</td>
+                    <td>${amenidades}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('tableContainer').innerHTML = html;
+        }
+
+        function updateAmenidades() {
+            const amenidadesCount = {};
+            const amenidadesKeys = [' PISCINA ADULTO ', ' PISCINA INFANTIL ', ' PLAYGROUND ', ' PETPLACE ', ' BICICLETÁRIO ', ' ESPAÇO FITNESS ', ' SALÃO DE FESTA ', ' ROOFTOP ', ' HORTA ', ' REDÁRIO ', ' PRAÇA ', ' CHURRAQUEIRA '];
+            const amenidadesLabels = { ' PISCINA ADULTO ': 'Piscina Adulto', ' PISCINA INFANTIL ': 'Piscina Infantil', ' PLAYGROUND ': 'Playground', ' PETPLACE ': 'Petplace', ' BICICLETÁRIO ': 'Bicicletário', ' ESPAÇO FITNESS ': 'Espaço Fitness', ' SALÃO DE FESTA ': 'Salão de Festa', ' ROOFTOP ': 'Rooftop', ' HORTA ': 'Horta', ' REDÁRIO ': 'Redário', ' PRAÇA ': 'Praça', ' CHURRAQUEIRA ': 'Churraqueira' };
+            const amenidadesIcons = { ' PISCINA ADULTO ': '🏊', ' PISCINA INFANTIL ': '👶', ' PLAYGROUND ': '🎪', ' PETPLACE ': '🐕', ' BICICLETÁRIO ': '🚲', ' ESPAÇO FITNESS ': '💪', ' SALÃO DE FESTA ': '🎉', ' ROOFTOP ': '🏢', ' HORTA ': '🌱', ' REDÁRIO ': '🪢', ' PRAÇA ': '🌳', ' CHURRAQUEIRA ': '🔥' };
+
+            amenidadesKeys.forEach(key => {
+                amenidadesCount[key] = 0;
+                empreendimentos.forEach(emp => {
+                    if (emp[key] && emp[key].toString().toUpperCase() === 'SIM') {
+                        amenidadesCount[key]++;
+                    }
+                });
+            });
+
+            let html = '';
+            amenidadesKeys.forEach(key => {
+                const count = amenidadesCount[key];
+                const pct = ((count / empreendimentos.length) * 100).toFixed(0);
+                html += `<button class="amenidade-btn">${amenidadesIcons[key]} <strong>${amenidadesLabels[key]}</strong><br>${count} (${pct}%)</button>`;
+            });
+
+            document.getElementById('amenidadesGrid').innerHTML = html;
+        }
+
+        function updateAnalise() {
+            const empresas = {};
+            empreendimentos.forEach(emp => {
+                if (!empresas[emp.EMPRESA]) {
+                    empresas[emp.EMPRESA] = { vendidas: 0, total: 0 };
+                }
+                empresas[emp.EMPRESA].total += parseInt(emp.UNIDADES) || 0;
+                empresas[emp.EMPRESA].vendidas += parseInt(emp.VENDAS) || 0;
+            });
+
+            const labels = Object.keys(empresas);
+            const vendidas = labels.map(e => empresas[e].vendidas);
+            const estoque = labels.map(e => empresas[e].total - empresas[e].vendidas);
+
+            const ctx = document.getElementById('analiseChart').getContext('2d');
+            if (analiseChart) analiseChart.destroy();
+            
+            analiseChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Vendidas', data: vendidas, backgroundColor: '#28a745' },
+                        { label: 'Estoque', data: estoque, backgroundColor: '#dc3545' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true } },
+                    plugins: { legend: { display: true } }
+                }
+            });
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
         function toggleSatellite() {
             isSatellite = !isSatellite;
             if (isSatellite) {
@@ -436,7 +591,6 @@
             }
         }
 
-        // Tela cheia
         function toggleFullscreen() {
             const mapContainer = document.querySelector('.map-container');
             if (!document.fullscreenElement) {
@@ -446,7 +600,6 @@
             }
         }
 
-        // Pesquisar localização
         async function searchLocation() {
             const searchText = document.getElementById('searchInput').value.trim();
             if (!searchText) { alert('Digite um endereço'); return; }
@@ -502,7 +655,6 @@
             statusEl.className = `status-message ${type}`;
         }
 
-        // Inicializar
         window.addEventListener('load', () => {
             initMap();
             loadDataFromSheet();
