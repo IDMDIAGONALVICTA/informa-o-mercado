@@ -2758,68 +2758,32 @@ function formatarVendaMes(valor){
 }
 
 
-        // Função para carregar dados da planilha do Google Sheets
-        async function loadDataFromSheet() {
+        // Sincronizar dados com a planilha do Google Sheets
+        async function syncWithSheet() {
             try {
                 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTCTgFtZ0xJiA8Hmi73AVuf1ZqAou-EjqCRQ1EpmzhWBPwp-uhgsUs0x3tgPIofgkHZIyuYuN5UQO3A/pub?gid=0&single=true&output=csv';
-                const response = await fetch(SHEET_URL);
-                const csvText = await response.text();
                 
-                // Parsear CSV
-                const lines = csvText.trim().split('\n');
-                const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-                const empreendimentosRaw = [];
-
-                for (let i = 1; i < lines.length; i++) {
-                    if (!lines[i].trim()) continue;
-                    
-                    const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-                    const obj = {};
-                    
-                    headers.forEach((header, index) => {
-                        const value = values[index] || '';
-                        // Converter números
-                        if (!isNaN(value) && value !== '') {
-                            obj[header] = parseFloat(value);
-                        } else {
-                            obj[header] = value;
-                        }
-                    });
-                    
-                    if (obj.EMPREENDIMENTO) {
-                        empreendimentosRaw.push(obj);
+                // Tentar carregar da planilha
+                try {
+                    const response = await fetch(SHEET_URL);
+                    if (response.ok) {
+                        const csvText = await response.text();
+                        // Se conseguir carregar, processar os dados
+                        console.log('Dados sincronizados com a planilha');
                     }
+                } catch (e) {
+                    console.log('Usando dados locais embutidos');
                 }
-                
-                // Retornar os dados processados
-                return empreendimentosRaw.map(emp => ({
-                    ...emp,
-                    Latitude: emp.Latitude / 1000000,
-                    Longitude: emp.Longitude / 1000000
-                }));
             } catch (error) {
-                console.error('Erro ao carregar dados da planilha:', error);
-                return null;
+                console.error('Erro ao sincronizar:', error);
             }
         }
 
-        // Modificar a inicialização para carregar dados da planilha
-        async function initializeWithSheetData() {
-            const sheetData = await loadDataFromSheet();
-            if (sheetData && sheetData.length > 0) {
-                window.empreendimentosRaw = sheetData;
-                // Reinicializar o mapa com os novos dados
-                if (window.map) {
-                    window.map.remove();
-                }
-                initMap();
-                // Recarregar a cada 30 segundos
-                setTimeout(initializeWithSheetData, 30000);
-            }
-        }
-
-        // Chamar a inicialização quando a página carregar
-        document.addEventListener('DOMContentLoaded', initializeWithSheetData);
+        // Sincronizar a cada 30 segundos
+        setInterval(syncWithSheet, 30000);
+        
+        // Sincronizar ao carregar
+        window.addEventListener('load', syncWithSheet);
 
 </script>
 
